@@ -1,0 +1,563 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="UTF-8" />
+  <title>Differential Evolution for TIS Optimization</title>
+  <script src="https://unpkg.com/react@18/umd/react.development.js"></script>
+  <script src="https://unpkg.com/react-dom@18/umd/react-dom.development.js"></script>
+  <script src="https://unpkg.com/babel-standalone@6/babel.min.js"></script>
+</head>
+<body>
+  <div id="root"></div>
+  
+  <script type="text/babel">
+    const App = () => {
+      const [population, setPopulation] = React.useState([]);
+      const [generation, setGeneration] = React.useState(0);
+      const [isRunning, setIsRunning] = React.useState(false);
+      const [bestSolution, setBestSolution] = React.useState(null);
+      const [targetROI, setTargetROI] = React.useState({ x: 350, y: 300, radius: 30 });
+      const [fitnessHistory, setFitnessHistory] = React.useState([]);
+      
+      // User-configurable parameters
+      const [populationSize, setPopulationSize] = React.useState(20);
+      const [maxGenerations, setMaxGenerations] = React.useState(100);
+      
+      // Constants
+      const WIDTH = 700;
+      const HEIGHT = 600;
+      const HEAD_RADIUS = 250;
+      const CENTER_X = WIDTH / 2;
+      const CENTER_Y = HEIGHT / 2;
+      const ELECTRODE_RADIUS = 8;
+      
+      // DE Parameters
+      const F = 0.8; // Differential weight
+      const CR = 0.9; // Crossover probability
+      
+      // Initialize population with random electrode positions
+      const initializePopulation = () => {
+        const newPopulation = [];
+        for (let i = 0; i < populationSize; i++) {
+          // Each individual has 4 electrodes (2 pairs for TIS)
+          // Each electrode has x, y coordinates
+          const individual = {
+            electrodes: [],
+            fitness: 0,
+            id: i
+          };
+          
+          for (let j = 0; j < 4; j++) {
+            const angle = Math.random() * 2 * Math.PI;
+            const radius = HEAD_RADIUS * 0.8 + Math.random() * HEAD_RADIUS * 0.15;
+            individual.electrodes.push({
+              x: CENTER_X + radius * Math.cos(angle),
+              y: CENTER_Y + radius * Math.sin(angle),
+              pair: Math.floor(j / 2), // 0 or 1 for the two pairs
+              polarity: j % 2 === 0 ? '+' : '-'
+            });
+          }
+          
+          individual.fitness = calculateFitness(individual);
+          newPopulation.push(individual);
+        }
+        
+        setPopulation(newPopulation);
+        updateBestSolution(newPopulation);
+        setFitnessHistory([{ generation: 0, best: Math.max(...newPopulation.map(ind => ind.fitness)) }]);
+      };
+      
+      // Calculate fitness based on TIS envelope in target ROI
+      const calculateFitness = (individual) => {
+        const { electrodes } = individual;
+        
+        // Simulate electric field envelope for TIS
+        // This is a simplified model - in reality this would involve FEM calculations
+        let totalEnvelope = 0;
+        let samplePoints = 0;
+        
+        // Sample points in the target ROI
+        for (let dx = -targetROI.radius; dx <= targetROI.radius; dx += 5) {
+          for (let dy = -targetROI.radius; dy <= targetROI.radius; dy += 5) {
+            const px = targetROI.x + dx;
+            const py = targetROI.y + dy;
+            
+            if (Math.sqrt(dx*dx + dy*dy) <= targetROI.radius) {
+              // Calculate field from each pair
+              const field1 = calculateFieldAtPoint(px, py, electrodes.filter(e => e.pair === 0));
+              const field2 = calculateFieldAtPoint(px, py, electrodes.filter(e => e.pair === 1));
+              
+              // TIS envelope calculation (simplified)
+              const envelope = Math.abs(field1 - field2) / 2;
+              totalEnvelope += envelope;
+              samplePoints++;
+            }
+          }
+        }
+        
+        const avgEnvelope = samplePoints > 0 ? totalEnvelope / samplePoints : 0;
+        
+        // Penalty for electrodes too close to each other or outside head
+        let penalty = 0;
+        for (let i = 0; i < electrodes.length; i++) {
+          const e1 = electrodes[i];
+          const distFromCenter = Math.sqrt((e1.x - CENTER_X)**2 + (e1.y - CENTER_Y)**2);
+          if (distFromCenter > HEAD_RADIUS * 0.95) penalty += 50;
+          
+          for (let j = i + 1; j < electrodes.length; j++) {
+            const e2 = electrodes[j];
+            const dist = Math.sqrt((e1.x - e2.x)**2 + (e1.y - e2.y)**2);
+            if (dist < ELECTRODE_RADIUS * 3) penalty += 20;
+          }
+        }
+        
+        return Math.max(0, avgEnvelope - penalty);
+      };
+      
+      // Simplified electric field calculation
+      const calculateFieldAtPoint = (px, py, electrodes) => {
+        let field = 0;
+        electrodes.forEach(electrode => {
+          const dist = Math.sqrt((px - electrode.x)**2 + (py - electrode.y)**2);
+          const fieldMagnitude = 1 / (dist + 1); // Simplified 1/r field
+          field += electrode.polarity === '+' ? fieldMagnitude : -fieldMagnitude;
+        });
+        return field;
+      };
+      
+      // Update best solution
+      const updateBestSolution = (pop) => {
+        const best = pop.reduce((best, current) => 
+          current.fitness > best.fitness ? current : best
+        );
+        setBestSolution(best);
+      };
+      
+      // Differential Evolution step
+      const evolveGeneration = () => {
+        const newPopulation = [...population];
+        
+        for (let i = 0; i < populationSize; i++) {
+          // Select three random individuals (different from current)
+          const candidates = population.filter((_, idx) => idx !== i);
+          const [a, b, c] = candidates.sort(() => Math.random() - 0.5).slice(0, 3);
+          
+          // Create mutant vector
+          const mutant = {
+            electrodes: [],
+            fitness: 0,
+            id: i
+          };
+          
+          for (let j = 0; j < 4; j++) {
+            mutant.electrodes.push({
+              x: a.electrodes[j].x + F * (b.electrodes[j].x - c.electrodes[j].x),
+              y: a.electrodes[j].y + F * (b.electrodes[j].y - c.electrodes[j].y),
+              pair: j < 2 ? 0 : 1,
+              polarity: j % 2 === 0 ? '+' : '-'
+            });
+          }
+          
+          // Crossover
+          const trial = {
+            electrodes: [],
+            fitness: 0,
+            id: i
+          };
+          
+          for (let j = 0; j < 4; j++) {
+            if (Math.random() < CR || j === Math.floor(Math.random() * 4)) {
+              trial.electrodes.push(mutant.electrodes[j]);
+            } else {
+              trial.electrodes.push(population[i].electrodes[j]);
+            }
+          }
+          
+          // Ensure electrodes stay within bounds
+          trial.electrodes.forEach(electrode => {
+            const distFromCenter = Math.sqrt((electrode.x - CENTER_X)**2 + (electrode.y - CENTER_Y)**2);
+            if (distFromCenter > HEAD_RADIUS * 0.95) {
+              const angle = Math.atan2(electrode.y - CENTER_Y, electrode.x - CENTER_X);
+              electrode.x = CENTER_X + HEAD_RADIUS * 0.9 * Math.cos(angle);
+              electrode.y = CENTER_Y + HEAD_RADIUS * 0.9 * Math.sin(angle);
+            }
+          });
+          
+          trial.fitness = calculateFitness(trial);
+          
+          // Selection
+          if (trial.fitness > population[i].fitness) {
+            newPopulation[i] = trial;
+          }
+        }
+        
+        setPopulation(newPopulation);
+        updateBestSolution(newPopulation);
+        
+        const newGeneration = generation + 1;
+        setGeneration(newGeneration);
+        
+        const bestFitness = Math.max(...newPopulation.map(ind => ind.fitness));
+        setFitnessHistory(prev => [...prev, { generation: newGeneration, best: bestFitness }]);
+      };
+      
+      // Animation loop
+      React.useEffect(() => {
+        let interval;
+        if (isRunning && generation < maxGenerations) {
+          interval = setInterval(() => {
+            evolveGeneration();
+          }, 200);
+        } else if (generation >= maxGenerations) {
+          setIsRunning(false);
+        }
+        return () => clearInterval(interval);
+      }, [isRunning, population, generation, maxGenerations]);
+      
+      // Initialize on mount
+      React.useEffect(() => {
+        initializePopulation();
+      }, []);
+      
+      const handleStart = () => setIsRunning(true);
+      const handleStop = () => setIsRunning(false);
+      const handleReset = () => {
+        setIsRunning(false);
+        setGeneration(0);
+        setFitnessHistory([]);
+        initializePopulation();
+      };
+      
+      const getElectrodeColor = (electrode, isBest = false) => {
+        const baseColors = {
+          0: { '+': '#ff4444', '-': '#ff8888' }, // Pair 1: Red tones
+          1: { '+': '#4444ff', '-': '#8888ff' }  // Pair 2: Blue tones
+        };
+        return isBest ? baseColors[electrode.pair][electrode.polarity] : 
+               baseColors[electrode.pair][electrode.polarity] + '80';
+      };
+      
+      return (
+        <div style={{margin: '20px'}}>
+          <h2 style={{textAlign: 'center'}}>Differential Evolution for TIS Optimization</h2>
+          <p style={{textAlign: 'center', fontSize: '14px', color: '#666'}}>
+            Optimizing electrode positions for Temporal Interference Stimulation targeting deep brain structures
+          </p>
+          
+          <div style={{textAlign: 'center', marginBottom: '20px'}}>
+            <div style={{marginBottom: '15px', display: 'flex', justifyContent: 'center', gap: '20px', alignItems: 'center'}}>
+              <div>
+                <label style={{marginRight: '8px', fontWeight: 'bold'}}>Population Size:</label>
+                <input 
+                  type="number" 
+                  value={populationSize} 
+                  onChange={(e) => setPopulationSize(Math.max(5, Math.min(100, parseInt(e.target.value) || 20)))}
+                  disabled={isRunning}
+                  min="5" 
+                  max="100"
+                  style={{padding: '4px 8px', width: '60px', border: '1px solid #ccc', borderRadius: '4px'}}
+                />
+              </div>
+              <div>
+                <label style={{marginRight: '8px', fontWeight: 'bold'}}>Max Generations:</label>
+                <input 
+                  type="number" 
+                  value={maxGenerations} 
+                  onChange={(e) => setMaxGenerations(Math.max(10, Math.min(1000, parseInt(e.target.value) || 100)))}
+                  disabled={isRunning}
+                  min="10" 
+                  max="1000"
+                  style={{padding: '4px 8px', width: '70px', border: '1px solid #ccc', borderRadius: '4px'}}
+                />
+              </div>
+            </div>
+            
+            <div>
+              <button 
+                onClick={handleStart} 
+                disabled={isRunning || generation >= maxGenerations}
+                style={{padding: '8px 16px', marginRight: '10px', backgroundColor: '#22c55e', color: 'white', border: 'none', borderRadius: '4px'}}
+              >
+                Start Evolution
+              </button>
+              <button 
+                onClick={handleStop} 
+                disabled={!isRunning}
+                style={{padding: '8px 16px', marginRight: '10px', backgroundColor: '#ef4444', color: 'white', border: 'none', borderRadius: '4px'}}
+              >
+                Stop
+              </button>
+              <button 
+                onClick={handleReset}
+                style={{padding: '8px 16px', backgroundColor: '#6b7280', color: 'white', border: 'none', borderRadius: '4px'}}
+              >
+                Reset
+              </button>
+            </div>
+          </div>
+          
+          <div style={{display: 'flex', gap: '20px', alignItems: 'flex-start'}}>
+            <div>
+              <svg width={WIDTH} height={HEIGHT} style={{border: '1px solid #d1d5db', borderRadius: '4px', backgroundColor: '#f8f9fa'}}>
+                {/* Head outline */}
+                <circle 
+                  cx={CENTER_X} 
+                  cy={CENTER_Y} 
+                  r={HEAD_RADIUS} 
+                  fill="none" 
+                  stroke="#333" 
+                  strokeWidth="2" 
+                />
+                
+                {/* Target ROI */}
+                <circle 
+                  cx={targetROI.x} 
+                  cy={targetROI.y} 
+                  r={targetROI.radius} 
+                  fill="rgba(255, 215, 0, 0.3)" 
+                  stroke="#ffd700" 
+                  strokeWidth="2" 
+                />
+                <text 
+                  x={targetROI.x} 
+                  y={targetROI.y + 5} 
+                  textAnchor="middle" 
+                  fontSize="12" 
+                  fill="#b45309"
+                  fontWeight="bold"
+                >
+                  Target ROI
+                </text>
+                
+                {/* Population electrodes (faded) */}
+                {population.map((individual, idx) => 
+                  individual.electrodes.map((electrode, eIdx) => (
+                    <g key={`${idx}-${eIdx}`}>
+                      <circle 
+                        cx={electrode.x} 
+                        cy={electrode.y} 
+                        r={ELECTRODE_RADIUS} 
+                        fill={getElectrodeColor(electrode, false)} 
+                        stroke="#000"
+                        strokeWidth="0.5"
+                      />
+                      <text 
+                        x={electrode.x} 
+                        y={electrode.y + 3} 
+                        textAnchor="middle" 
+                        fontSize="8" 
+                        fill="#fff"
+                        fontWeight="bold"
+                      >
+                        {electrode.polarity}
+                      </text>
+                    </g>
+                  ))
+                )}
+                
+                {/* Best solution electrodes (highlighted) */}
+                {bestSolution && bestSolution.electrodes.map((electrode, idx) => (
+                  <g key={`best-${idx}`}>
+                    <circle 
+                      cx={electrode.x} 
+                      cy={electrode.y} 
+                      r={ELECTRODE_RADIUS + 2} 
+                      fill={getElectrodeColor(electrode, true)} 
+                      stroke="#000"
+                      strokeWidth="2"
+                    />
+                    <text 
+                      x={electrode.x} 
+                      y={electrode.y + 3} 
+                      textAnchor="middle" 
+                      fontSize="10" 
+                      fill="#fff"
+                      fontWeight="bold"
+                    >
+                      {electrode.polarity}
+                    </text>
+                  </g>
+                ))}
+                
+                {/* Connection lines for electrode pairs */}
+                {bestSolution && [0, 1].map(pairIdx => {
+                  const pairElectrodes = bestSolution.electrodes.filter(e => e.pair === pairIdx);
+                  if (pairElectrodes.length === 2) {
+                    return (
+                      <line 
+                        key={`pair-${pairIdx}`}
+                        x1={pairElectrodes[0].x}
+                        y1={pairElectrodes[0].y}
+                        x2={pairElectrodes[1].x}
+                        y2={pairElectrodes[1].y}
+                        stroke={pairIdx === 0 ? '#ff4444' : '#4444ff'}
+                        strokeWidth="2"
+                        strokeDasharray="5,5"
+                      />
+                    );
+                  }
+                  return null;
+                })}
+              </svg>
+              
+              <div style={{marginTop: '10px', fontSize: '12px'}}>
+                <div style={{display: 'flex', alignItems: 'center', gap: '15px'}}>
+                  <div style={{display: 'flex', alignItems: 'center', gap: '5px'}}>
+                    <div style={{width: '12px', height: '12px', backgroundColor: '#ff4444', borderRadius: '50%'}}></div>
+                    <span>Pair 1 (+)</span>
+                  </div>
+                  <div style={{display: 'flex', alignItems: 'center', gap: '5px'}}>
+                    <div style={{width: '12px', height: '12px', backgroundColor: '#ff8888', borderRadius: '50%'}}></div>
+                    <span>Pair 1 (-)</span>
+                  </div>
+                  <div style={{display: 'flex', alignItems: 'center', gap: '5px'}}>
+                    <div style={{width: '12px', height: '12px', backgroundColor: '#4444ff', borderRadius: '50%'}}></div>
+                    <span>Pair 2 (+)</span>
+                  </div>
+                  <div style={{display: 'flex', alignItems: 'center', gap: '5px'}}>
+                    <div style={{width: '12px', height: '12px', backgroundColor: '#8888ff', borderRadius: '50%'}}></div>
+                    <span>Pair 2 (-)</span>
+                  </div>
+                </div>
+              </div>
+            </div>
+            
+            <div style={{flex: '1', minWidth: '300px'}}>
+              <div style={{marginBottom: '20px', padding: '15px', border: '1px solid #d1d5db', borderRadius: '4px', backgroundColor: 'white'}}>
+                <h3 style={{margin: '0 0 10px 0'}}>Evolution Status</h3>
+                <div><strong>Generation:</strong> {generation} / {maxGenerations}</div>
+                <div><strong>Population Size:</strong> {populationSize}</div>
+                <div><strong>Best Fitness:</strong> {bestSolution ? bestSolution.fitness.toFixed(3) : 'N/A'}</div>
+                <div><strong>Progress:</strong> {((generation / maxGenerations) * 100).toFixed(1)}%</div>
+                <div><strong>F (Differential Weight):</strong> {F}</div>
+                <div><strong>CR (Crossover Rate):</strong> {CR}</div>
+                {generation >= maxGenerations && (
+                  <div style={{marginTop: '10px', padding: '8px', backgroundColor: '#dcfce7', border: '1px solid #16a34a', borderRadius: '4px', color: '#15803d'}}>
+                    <strong>Evolution Complete!</strong>
+                  </div>
+                )}
+              </div>
+              
+              {fitnessHistory.length > 1 && (
+                <div style={{padding: '15px', border: '1px solid #d1d5db', borderRadius: '4px', backgroundColor: 'white'}}>
+                  <h3 style={{margin: '0 0 15px 0'}}>Fitness Evolution</h3>
+                  <svg width="400" height="250" style={{border: '1px solid #e5e7eb', backgroundColor: '#fafafa'}}>
+                    {/* Grid lines */}
+                    {[0, 1, 2, 3, 4, 5].map(i => (
+                      <g key={`grid-${i}`}>
+                        <line x1="50" y1={40 + i * 32} x2="380" y2={40 + i * 32} stroke="#e5e7eb" strokeWidth="1"/>
+                        <line x1={50 + i * 55} y1="40" x2={50 + i * 55} y2="200" stroke="#e5e7eb" strokeWidth="1"/>
+                      </g>
+                    ))}
+                    
+                    {/* Fitness curve */}
+                    <polyline
+                      points={fitnessHistory.map((point, idx) => {
+                        const x = 50 + (idx / Math.max(fitnessHistory.length - 1, 1)) * 330;
+                        const maxFitness = Math.max(...fitnessHistory.map(p => p.best));
+                        const minFitness = Math.min(...fitnessHistory.map(p => p.best));
+                        const range = maxFitness - minFitness || 1;
+                        const y = 200 - ((point.best - minFitness) / range) * 160;
+                        return `${x},${y}`;
+                      }).join(' ')}
+                      fill="none"
+                      stroke="#3b82f6"
+                      strokeWidth="3"
+                    />
+                    
+                    {/* Data points */}
+                    {fitnessHistory.map((point, idx) => {
+                      const x = 50 + (idx / Math.max(fitnessHistory.length - 1, 1)) * 330;
+                      const maxFitness = Math.max(...fitnessHistory.map(p => p.best));
+                      const minFitness = Math.min(...fitnessHistory.map(p => p.best));
+                      const range = maxFitness - minFitness || 1;
+                      const y = 200 - ((point.best - minFitness) / range) * 160;
+                      return (
+                        <circle 
+                          key={`point-${idx}`}
+                          cx={x} 
+                          cy={y} 
+                          r="3" 
+                          fill="#1d4ed8" 
+                          stroke="white" 
+                          strokeWidth="1"
+                        />
+                      );
+                    })}
+                    
+                    {/* Axes */}
+                    <line x1="50" y1="200" x2="380" y2="200" stroke="#374151" strokeWidth="2"/>
+                    <line x1="50" y1="40" x2="50" y2="200" stroke="#374151" strokeWidth="2"/>
+                    
+                    {/* Y-axis labels */}
+                    {[0, 1, 2, 3, 4, 5].map(i => {
+                      const maxFitness = Math.max(...fitnessHistory.map(p => p.best));
+                      const minFitness = Math.min(...fitnessHistory.map(p => p.best));
+                      const range = maxFitness - minFitness || 1;
+                      const value = minFitness + (range * (5 - i) / 5);
+                      return (
+                        <text 
+                          key={`y-label-${i}`}
+                          x="45" 
+                          y={40 + i * 32 + 4} 
+                          textAnchor="end" 
+                          fontSize="11" 
+                          fill="#6b7280"
+                        >
+                          {value.toFixed(2)}
+                        </text>
+                      );
+                    })}
+                    
+                    {/* X-axis labels */}
+                    {[0, 1, 2, 3, 4, 5].map(i => {
+                      const generation = Math.round((fitnessHistory.length - 1) * i / 5);
+                      return (
+                        <text 
+                          key={`x-label-${i}`}
+                          x={50 + i * 55} 
+                          y="220" 
+                          textAnchor="middle" 
+                          fontSize="11" 
+                          fill="#6b7280"
+                        >
+                          {generation}
+                        </text>
+                      );
+                    })}
+                    
+                    {/* Axis labels */}
+                    <text x="215" y="240" textAnchor="middle" fontSize="12" fill="#374151" fontWeight="bold">Generation</text>
+                    <text x="20" y="120" textAnchor="middle" fontSize="12" fill="#374151" fontWeight="bold" transform="rotate(-90, 20, 120)">Fitness</text>
+                    
+                    {/* Current best fitness indicator */}
+                    {bestSolution && (
+                      <text x="380" y="30" textAnchor="end" fontSize="12" fill="#1d4ed8" fontWeight="bold">
+                        Best: {bestSolution.fitness.toFixed(3)}
+                      </text>
+                    )}
+                  </svg>
+                </div>
+              )}
+            </div>
+          </div>
+          
+          <div style={{marginTop: '20px', fontSize: '14px', lineHeight: '1.5'}}>
+            <h3>About TIS Optimization:</h3>
+            <ul style={{paddingLeft: '20px'}}>
+              <li><strong>Temporal Interference Stimulation (TIS)</strong> uses two electrode pairs operating at slightly different frequencies</li>
+              <li><strong>Target:</strong> Maximize the interference envelope in deep brain structures (yellow ROI)</li>
+              <li><strong>Differential Evolution:</strong> Population-based optimization algorithm that evolves electrode positions</li>
+              <li><strong>Constraints:</strong> Electrodes must stay on head surface and maintain minimum distances</li>
+              <li><strong>Fitness:</strong> Based on TIS envelope magnitude in target region minus penalties</li>
+            </ul>
+          </div>
+        </div>
+      );
+    };
+
+    const root = ReactDOM.createRoot(document.getElementById('root'));
+    root.render(<App />);
+  </script>
+</body>
+</html> 

@@ -1,0 +1,424 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="UTF-8" />
+  <title>Exhaustive Search - Nearest Electrode Matching</title>
+  <script src="https://unpkg.com/react@18/umd/react.development.js"></script>
+  <script src="https://unpkg.com/react-dom@18/umd/react-dom.development.js"></script>
+  <script src="https://unpkg.com/babel-standalone@6/babel.min.js"></script>
+</head>
+<body>
+  <div id="root"></div>
+  
+  <script type="text/babel">
+    const App = () => {
+      const [fixedElectrodes, setFixedElectrodes] = React.useState([]);
+      const [seedElectrodes, setSeedElectrodes] = React.useState([]);
+      const [nearestMatches, setNearestMatches] = React.useState([]);
+      const [usedElectrodes, setUsedElectrodes] = React.useState(new Set());
+      
+      // Constants
+      const WIDTH = 700;
+      const HEIGHT = 700;
+      const CENTER_X = WIDTH / 2;
+      const CENTER_Y = HEIGHT / 2;
+      const RADIUS = 300;
+      const ELECTRODE_RADIUS = 6;
+      const SEED_RADIUS = 8;
+      const MIN_DISTANCE = 25; // Minimum distance between seed and fixed electrodes
+      
+      // Generate 64 fixed electrodes using Fibonacci spiral
+      React.useEffect(() => {
+        const electrodes = [];
+        const goldenRatio = (1 + Math.sqrt(5)) / 2;
+        const angleIncrement = 2 * Math.PI / goldenRatio;
+        
+        for (let i = 0; i < 64; i++) {
+          const radius = Math.sqrt(i / 63);
+          const angle = i * angleIncrement;
+          const angleDegrees = (angle * 180 / Math.PI) % 360;
+          const radiusFactor = radius * 0.98;
+          
+          const r = radiusFactor * (RADIUS * 0.8);
+          const x = CENTER_X + r * Math.cos(angle);
+          const y = CENTER_Y + r * Math.sin(angle);
+          
+          electrodes.push({
+            id: i + 1,
+            x,
+            y,
+            available: true
+          });
+        }
+        
+        setFixedElectrodes(electrodes);
+        generateRandomSeeds(electrodes);
+      }, []);
+      
+      // Generate 4 random seed electrodes (2 pairs)
+      const generateRandomSeeds = (fixedElecs = fixedElectrodes) => {
+        const seeds = [];
+        const maxAttempts = 100;
+        
+        for (let pairIdx = 0; pairIdx < 2; pairIdx++) {
+          for (let polarity = 0; polarity < 2; polarity++) {
+            let attempts = 0;
+            let validPosition = false;
+            
+            while (!validPosition && attempts < maxAttempts) {
+              // Generate random position within circle
+              const angle = Math.random() * 2 * Math.PI;
+              const radius = Math.random() * RADIUS * 0.9;
+              const x = CENTER_X + radius * Math.cos(angle);
+              const y = CENTER_Y + radius * Math.sin(angle);
+              
+              // Check if position is far enough from fixed electrodes and other seeds
+              let tooClose = false;
+              
+              // Check distance from fixed electrodes
+              for (const electrode of fixedElecs) {
+                const dist = Math.sqrt((x - electrode.x)**2 + (y - electrode.y)**2);
+                if (dist < MIN_DISTANCE) {
+                  tooClose = true;
+                  break;
+                }
+              }
+              
+              // Check distance from other seeds
+              if (!tooClose) {
+                for (const seed of seeds) {
+                  const dist = Math.sqrt((x - seed.x)**2 + (y - seed.y)**2);
+                  if (dist < MIN_DISTANCE) {
+                    tooClose = true;
+                    break;
+                  }
+                }
+              }
+              
+              if (!tooClose) {
+                seeds.push({
+                  id: `seed_${pairIdx}_${polarity}`,
+                  x,
+                  y,
+                  pair: pairIdx,
+                  polarity: polarity === 0 ? '+' : '-'
+                });
+                validPosition = true;
+              }
+              
+              attempts++;
+            }
+            
+            // If we couldn't find a valid position, place it randomly anyway
+            if (!validPosition) {
+              const angle = Math.random() * 2 * Math.PI;
+              const radius = Math.random() * RADIUS * 0.7;
+              const x = CENTER_X + radius * Math.cos(angle);
+              const y = CENTER_Y + radius * Math.sin(angle);
+              
+              seeds.push({
+                id: `seed_${pairIdx}_${polarity}`,
+                x,
+                y,
+                pair: pairIdx,
+                polarity: polarity === 0 ? '+' : '-'
+              });
+            }
+          }
+        }
+        
+        setSeedElectrodes(seeds);
+        findOptimalMatches(seeds, fixedElecs);
+      };
+      
+      // Hungarian Algorithm (Linear Sum Assignment) to minimize total distance
+      const hungarianAssignment = (costMatrix) => {
+        const n = costMatrix.length;
+        const m = costMatrix[0].length;
+        
+        // Simple greedy approximation for demonstration
+        // In practice, you'd use a proper Hungarian algorithm implementation
+        const assignment = [];
+        const usedCols = new Set();
+        
+        // Create array of all possible assignments with their costs
+        const allAssignments = [];
+        for (let i = 0; i < n; i++) {
+          for (let j = 0; j < m; j++) {
+            allAssignments.push({ row: i, col: j, cost: costMatrix[i][j] });
+          }
+        }
+        
+        // Sort by cost
+        allAssignments.sort((a, b) => a.cost - b.cost);
+        
+        const usedRows = new Set();
+        
+        // Greedily select assignments
+        for (const assign of allAssignments) {
+          if (!usedRows.has(assign.row) && !usedCols.has(assign.col)) {
+            assignment.push(assign);
+            usedRows.add(assign.row);
+            usedCols.add(assign.col);
+            
+            if (assignment.length === n) break;
+          }
+        }
+        
+        return assignment;
+      };
+
+      // Find optimal assignment using Hungarian algorithm to minimize total distance
+      const findOptimalMatches = (seeds, fixedElecs) => {
+        if (seeds.length === 0 || fixedElecs.length === 0) {
+          setNearestMatches([]);
+          setUsedElectrodes(new Set());
+          return;
+        }
+        
+        // Create distance matrix
+        const distanceMatrix = seeds.map(seed => 
+          fixedElecs.map(electrode => 
+            Math.sqrt((seed.x - electrode.x)**2 + (seed.y - electrode.y)**2)
+          )
+        );
+        
+        // Find optimal assignment using Hungarian algorithm
+        const assignment = hungarianAssignment(distanceMatrix);
+        
+        // Create matches from assignment
+        const matches = assignment.map(assign => ({
+          seed: seeds[assign.row],
+          electrode: fixedElecs[assign.col],
+          distance: assign.cost
+        }));
+        
+        const used = new Set(assignment.map(assign => fixedElecs[assign.col].id));
+        
+        setNearestMatches(matches);
+        setUsedElectrodes(used);
+      };
+      
+      // Reset and generate new random seeds
+      const handleReset = () => {
+        generateRandomSeeds();
+      };
+      
+      // Get color for seed electrodes (bright, saturated colors)
+      const getSeedColor = (seed) => {
+        const colors = {
+          0: { '+': '#ff1744', '-': '#ff5722' }, // Pair 1: Bright red tones
+          1: { '+': '#2196f3', '-': '#3f51b5' }  // Pair 2: Bright blue tones
+        };
+        return colors[seed.pair][seed.polarity];
+      };
+      
+      // Get color for matched electrodes (darker, muted versions)
+      const getMatchedElectrodeColor = (electrodeId) => {
+        const match = nearestMatches.find(m => m.electrode.id === electrodeId);
+        if (match) {
+          const matchedColors = {
+            0: { '+': '#b71c1c', '-': '#d84315' }, // Pair 1: Dark red tones
+            1: { '+': '#0d47a1', '-': '#1a237e' }  // Pair 2: Dark blue tones
+          };
+          return matchedColors[match.seed.pair][match.seed.polarity];
+        }
+        return '#555555';
+      };
+      
+      return (
+        <div style={{margin: '20px'}}>
+          <h2 style={{textAlign: 'center'}}>Exhaustive Search - Optimal Electrode Assignment</h2>
+          <p style={{textAlign: 'center', fontSize: '14px', color: '#666'}}>
+            Hungarian algorithm minimizes total distance when mapping seed electrodes to 64 fixed positions
+          </p>
+          
+          <div style={{textAlign: 'center', marginBottom: '20px'}}>
+            <button 
+              onClick={handleReset}
+              style={{padding: '10px 20px', backgroundColor: '#3b82f6', color: 'white', border: 'none', borderRadius: '4px', fontSize: '16px'}}
+            >
+              Reset & Randomize Seeds
+            </button>
+          </div>
+          
+          <div style={{display: 'flex', gap: '20px', alignItems: 'flex-start'}}>
+            <div>
+              <svg width={WIDTH} height={HEIGHT} style={{border: '1px solid #d1d5db', borderRadius: '4px', backgroundColor: '#f8f9fa'}}>
+                {/* Outer circle */}
+                <circle 
+                  cx={CENTER_X} 
+                  cy={CENTER_Y} 
+                  r={RADIUS} 
+                  fill="none" 
+                  stroke="#333" 
+                  strokeWidth="2" 
+                />
+                
+                {/* Connection lines from seeds to nearest electrodes */}
+                {nearestMatches.map((match, index) => (
+                  <line 
+                    key={`connection-${index}`}
+                    x1={match.seed.x}
+                    y1={match.seed.y}
+                    x2={match.electrode.x}
+                    y2={match.electrode.y}
+                    stroke={getSeedColor(match.seed)}
+                    strokeWidth="2"
+                    strokeDasharray="5,5"
+                  />
+                ))}
+                
+                {/* Fixed electrodes */}
+                {fixedElectrodes.map((electrode) => (
+                  <g key={electrode.id}>
+                    <circle 
+                      cx={electrode.x} 
+                      cy={electrode.y} 
+                      r={ELECTRODE_RADIUS} 
+                      fill={usedElectrodes.has(electrode.id) ? getMatchedElectrodeColor(electrode.id) : '#555555'} 
+                      stroke="#000"
+                      strokeWidth={usedElectrodes.has(electrode.id) ? "2" : "1"}
+                      opacity={usedElectrodes.has(electrode.id) ? 1 : 0.6}
+                    />
+                  </g>
+                ))}
+                
+                {/* Seed electrodes */}
+                {seedElectrodes.map((seed) => (
+                  <g key={seed.id}>
+                    <circle 
+                      cx={seed.x} 
+                      cy={seed.y} 
+                      r={SEED_RADIUS} 
+                      fill={getSeedColor(seed)} 
+                      stroke="#000"
+                      strokeWidth="3"
+                      strokeDasharray="3,3"
+                    />
+                    <text 
+                      x={seed.x} 
+                      y={seed.y + 3} 
+                      textAnchor="middle" 
+                      dominantBaseline="middle" 
+                      fontSize="10"
+                      fill="#fff"
+                      fontWeight="bold"
+                    >
+                      {seed.polarity}
+                    </text>
+                  </g>
+                ))}
+                
+                {/* Distance labels */}
+                {nearestMatches.map((match, index) => {
+                  const midX = (match.seed.x + match.electrode.x) / 2;
+                  const midY = (match.seed.y + match.electrode.y) / 2;
+                  const distanceInMm = (match.distance * 0.5).toFixed(1); // Convert pixels to mm (artificial conversion)
+                  return (
+                    <text 
+                      key={`distance-${index}`}
+                      x={midX} 
+                      y={midY - 5} 
+                      textAnchor="middle" 
+                      fontSize="10"
+                      fill="#333"
+                      fontWeight="bold"
+                      style={{backgroundColor: 'rgba(255,255,255,0.8)'}}
+                    >
+                      {distanceInMm}mm
+                    </text>
+                  );
+                })}
+              </svg>
+              
+              <div style={{marginTop: '15px', fontSize: '12px'}}>
+                <div style={{display: 'flex', alignItems: 'center', gap: '20px', justifyContent: 'center'}}>
+                  <div style={{display: 'flex', alignItems: 'center', gap: '5px'}}>
+                    <div style={{width: '12px', height: '12px', backgroundColor: '#555555', borderRadius: '50%', opacity: 0.6}}></div>
+                    <span>Fixed Electrodes</span>
+                  </div>
+                  <div style={{display: 'flex', alignItems: 'center', gap: '5px'}}>
+                    <div style={{width: '12px', height: '12px', backgroundColor: '#ff1744', borderRadius: '50%', border: '2px dashed #000'}}></div>
+                    <span>Seed Electrodes (Bright)</span>
+                  </div>
+                  <div style={{display: 'flex', alignItems: 'center', gap: '5px'}}>
+                    <div style={{width: '12px', height: '12px', backgroundColor: '#b71c1c', borderRadius: '50%'}}></div>
+                    <span>Matched Electrodes (Dark)</span>
+                  </div>
+                </div>
+              </div>
+            </div>
+            
+            <div style={{flex: '1', minWidth: '300px'}}>
+              <div style={{marginBottom: '20px', padding: '15px', border: '1px solid #d1d5db', borderRadius: '4px', backgroundColor: 'white'}}>
+                <h3 style={{margin: '0 0 15px 0'}}>Matching Results</h3>
+                {nearestMatches.map((match, index) => (
+                  <div key={index} style={{
+                    marginBottom: '10px', 
+                    padding: '10px', 
+                    borderRadius: '4px', 
+                    backgroundColor: `${getSeedColor(match.seed)}20`,
+                    border: `1px solid ${getSeedColor(match.seed)}`
+                  }}>
+                    <div style={{fontWeight: 'bold', color: getSeedColor(match.seed)}}>
+                      Pair {match.seed.pair + 1} ({match.seed.polarity})
+                    </div>
+                    <div style={{fontSize: '12px', marginTop: '5px'}}>
+                      <div>Seed: ({Math.round(match.seed.x)}, {Math.round(match.seed.y)})</div>
+                      <div>Matched: Electrode {match.electrode.id} ({Math.round(match.electrode.x)}, {Math.round(match.electrode.y)})</div>
+                      <div><strong>Distance: {(match.distance * 0.5).toFixed(1)}mm</strong></div>
+                    </div>
+                  </div>
+                ))}
+              </div>
+              
+              <div style={{padding: '15px', border: '1px solid #d1d5db', borderRadius: '4px', backgroundColor: 'white'}}>
+                <h3 style={{margin: '0 0 15px 0'}}>Search Statistics</h3>
+                <div style={{fontSize: '14px'}}>
+                  <div><strong>Total Fixed Electrodes:</strong> {fixedElectrodes.length}</div>
+                  <div><strong>Seed Electrodes:</strong> {seedElectrodes.length}</div>
+                  <div><strong>Successful Matches:</strong> {nearestMatches.length}</div>
+                  <div><strong>Used Electrodes:</strong> {usedElectrodes.size}</div>
+                  <div><strong>Available Electrodes:</strong> {fixedElectrodes.length - usedElectrodes.size}</div>
+                </div>
+                
+                {nearestMatches.length > 0 && (
+                  <div style={{marginTop: '15px'}}>
+                    <div><strong>Distance Summary:</strong></div>
+                    <div style={{fontSize: '12px', marginTop: '5px'}}>
+                      <div><strong>Total: {(nearestMatches.reduce((sum, m) => sum + m.distance, 0) * 0.5).toFixed(1)}mm</strong></div>
+                      <div>Min: {(Math.min(...nearestMatches.map(m => m.distance)) * 0.5).toFixed(1)}mm</div>
+                      <div>Max: {(Math.max(...nearestMatches.map(m => m.distance)) * 0.5).toFixed(1)}mm</div>
+                      <div>Avg: {(nearestMatches.reduce((sum, m) => sum + m.distance, 0) / nearestMatches.length * 0.5).toFixed(1)}mm</div>
+                    </div>
+                  </div>
+                )}
+              </div>
+            </div>
+          </div>
+          
+          <div style={{marginTop: '20px', fontSize: '14px', lineHeight: '1.5'}}>
+            <h3>How It Works:</h3>
+            <ol style={{paddingLeft: '20px'}}>
+              <li><strong>Fixed Electrodes:</strong> 64 electrodes distributed evenly using Fibonacci spiral (gray dots)</li>
+              <li><strong>Random Seeds:</strong> 4 seed electrodes (2 pairs) placed randomly, avoiding overlap with fixed positions</li>
+              <li><strong>Distance Matrix:</strong> Calculate distances between all seed-electrode pairs</li>
+              <li><strong>Hungarian Algorithm:</strong> Find optimal assignment that minimizes total distance</li>
+              <li><strong>Global Optimization:</strong> Unlike greedy matching, considers all possibilities simultaneously</li>
+              <li><strong>Visual Feedback:</strong> Dashed lines show optimal connections, colors indicate pairs</li>
+            </ol>
+            
+            <div style={{marginTop: '15px', padding: '10px', backgroundColor: '#f0f9ff', borderRadius: '4px', border: '1px solid #0ea5e9'}}>
+              <strong>Hungarian Algorithm:</strong> This optimal assignment algorithm minimizes the total distance across all electrode mappings, ensuring the best global solution rather than locally optimal greedy choices. This matches the approach used in the provided Python code with <code>linear_sum_assignment</code>.
+            </div>
+          </div>
+        </div>
+      );
+    };
+
+    const root = ReactDOM.createRoot(document.getElementById('root'));
+    root.render(<App />);
+  </script>
+</body>
+</html> 

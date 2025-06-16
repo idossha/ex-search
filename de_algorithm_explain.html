@@ -1,0 +1,209 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="UTF-8" />
+  <title>Differential Evolution Algorithm Demo</title>
+  <style>
+    body { font-family: Arial, sans-serif; margin: 20px; }
+    .step { margin: 20px 0; padding: 15px; border: 1px solid #ccc; border-radius: 5px; }
+    .population { display: flex; gap: 10px; margin: 10px 0; }
+    .individual { width: 40px; height: 40px; border-radius: 50%; display: flex; align-items: center; justify-content: center; color: white; font-weight: bold; }
+    .best { border: 3px solid gold; }
+    svg { border: 1px solid #ddd; margin: 10px 0; }
+  </style>
+</head>
+<body>
+  <h1>Differential Evolution Algorithm for TIS Optimization</h1>
+  
+  <div class="step">
+    <h2>Step 1: Initialize Population</h2>
+    <p>Create random electrode configurations (individuals) in the population</p>
+    <div class="population">
+      <div class="individual" style="background: #ff6b6b;">1</div>
+      <div class="individual" style="background: #4ecdc4;">2</div>
+      <div class="individual" style="background: #45b7d1;">3</div>
+      <div class="individual" style="background: #96ceb4;">4</div>
+      <div class="individual" style="background: #feca57;">5</div>
+      <div class="individual" style="background: #ff9ff3;">6</div>
+    </div>
+    <p><strong>Fitness:</strong> Each individual evaluated based on TIS envelope in target region</p>
+  </div>
+
+  <div class="step">
+    <h2>Step 2: Mutation (Create Mutant Vector)</h2>
+    <p>For each individual X<sub>i</sub>, create mutant: <strong>V<sub>i</sub> = X<sub>a</sub> + F × (X<sub>b</sub> - X<sub>c</sub>)</strong></p>
+    <svg width="500" height="200">
+      <!-- Original vectors -->
+      <circle cx="100" cy="100" r="8" fill="#ff6b6b" />
+      <text x="85" y="125">X_a</text>
+      
+      <circle cx="200" cy="80" r="8" fill="#4ecdc4" />
+      <text x="185" y="105">X_b</text>
+      
+      <circle cx="300" cy="120" r="8" fill="#45b7d1" />
+      <text x="285" y="145">X_c</text>
+      
+      <!-- Difference vector -->
+      <line x1="200" y1="80" x2="300" y2="120" stroke="#666" stroke-width="2" stroke-dasharray="5,5"/>
+      <text x="240" y="70">X_b - X_c</text>
+      
+      <!-- Scaled difference -->
+      <line x1="100" y1="100" x2="180" y2="140" stroke="#ff6b6b" stroke-width="3"/>
+      <text x="120" y="130">F × (X_b - X_c)</text>
+      
+      <!-- Mutant -->
+      <circle cx="180" cy="140" r="8" fill="#e74c3c" stroke="gold" stroke-width="2"/>
+      <text x="165" y="165">V_i (mutant)</text>
+    </svg>
+  </div>
+
+  <div class="step">
+    <h2>Step 3: Crossover</h2>
+    <p>Create trial vector by mixing mutant and original: <strong>U<sub>i,j</sub> = V<sub>i,j</sub> if rand() < CR, else X<sub>i,j</sub></strong></p>
+    <table border="1" style="border-collapse: collapse; margin: 10px 0;">
+      <tr>
+        <th>Parameter</th>
+        <th>Original X<sub>i</sub></th>
+        <th>Mutant V<sub>i</sub></th>
+        <th>Random</th>
+        <th>Trial U<sub>i</sub></th>
+      </tr>
+      <tr>
+        <td>Electrode 1 X</td>
+        <td>150</td>
+        <td style="background: #ffeb3b;">180</td>
+        <td>0.2 < 0.9 ✓</td>
+        <td style="background: #ffeb3b;">180</td>
+      </tr>
+      <tr>
+        <td>Electrode 1 Y</td>
+        <td>200</td>
+        <td style="background: #ffeb3b;">220</td>
+        <td>0.1 < 0.9 ✓</td>
+        <td style="background: #ffeb3b;">220</td>
+      </tr>
+      <tr>
+        <td>Electrode 2 X</td>
+        <td style="background: #e3f2fd;">300</td>
+        <td>280</td>
+        <td>0.95 > 0.9 ✗</td>
+        <td style="background: #e3f2fd;">300</td>
+      </tr>
+      <tr>
+        <td>Electrode 2 Y</td>
+        <td style="background: #e3f2fd;">150</td>
+        <td>170</td>
+        <td>0.92 > 0.9 ✗</td>
+        <td style="background: #e3f2fd;">150</td>
+      </tr>
+    </table>
+    <p><strong>CR = 0.9</strong> (crossover rate), <strong>Yellow = from mutant, Blue = from original</strong></p>
+  </div>
+
+  <div class="step">
+    <h2>Step 4: Selection</h2>
+    <p>Keep the better solution: <strong>X<sub>i</sub><sup>new</sup> = U<sub>i</sub> if f(U<sub>i</sub>) > f(X<sub>i</sub>), else X<sub>i</sub></strong></p>
+    <div style="display: flex; gap: 30px; align-items: center;">
+      <div>
+        <div class="individual" style="background: #ff6b6b;">Original</div>
+        <p>Fitness: 0.65</p>
+      </div>
+      <div style="font-size: 24px;">VS</div>
+      <div>
+        <div class="individual" style="background: #4ecdc4;">Trial</div>
+        <p>Fitness: 0.78</p>
+      </div>
+      <div style="font-size: 24px;">→</div>
+      <div>
+        <div class="individual best" style="background: #4ecdc4;">Winner</div>
+        <p><strong>Trial selected!</strong></p>
+      </div>
+    </div>
+  </div>
+
+  <div class="step">
+    <h2>Step 5: Repeat for All Individuals</h2>
+    <p>Apply mutation, crossover, and selection to entire population</p>
+    <div>
+      <h4>Generation 0 → Generation 1</h4>
+      <div style="display: flex; gap: 20px;">
+        <div>
+          <p><strong>Before:</strong></p>
+          <div class="population">
+            <div class="individual" style="background: #ff6b6b;">1</div>
+            <div class="individual" style="background: #4ecdc4;">2</div>
+            <div class="individual" style="background: #45b7d1;">3</div>
+            <div class="individual" style="background: #96ceb4;">4</div>
+            <div class="individual" style="background: #feca57;">5</div>
+            <div class="individual" style="background: #ff9ff3;">6</div>
+          </div>
+          <p>Best fitness: 0.65</p>
+        </div>
+        <div style="font-size: 24px; align-self: center;">→</div>
+        <div>
+          <p><strong>After:</strong></p>
+          <div class="population">
+            <div class="individual" style="background: #4ecdc4;">2</div>
+            <div class="individual best" style="background: #27ae60;">2'</div>
+            <div class="individual" style="background: #45b7d1;">3</div>
+            <div class="individual" style="background: #e74c3c;">4'</div>
+            <div class="individual" style="background: #feca57;">5</div>
+            <div class="individual" style="background: #8e44ad;">6'</div>
+          </div>
+          <p>Best fitness: 0.78 ↑</p>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <div class="step">
+    <h2>TIS-Specific Application</h2>
+    <p>For Temporal Interference Stimulation, each individual represents:</p>
+    <ul>
+      <li><strong>4 electrode positions</strong> (2 pairs for interference)</li>
+      <li><strong>Fitness function:</strong> TIS envelope magnitude in target brain region</li>
+      <li><strong>Constraints:</strong> Electrodes must stay on head surface, minimum spacing</li>
+      <li><strong>Goal:</strong> Maximize interference in deep brain structures</li>
+    </ul>
+    
+    <svg width="400" height="300">
+      <!-- Head outline -->
+      <circle cx="200" cy="150" r="120" fill="none" stroke="#333" stroke-width="2"/>
+      
+      <!-- Target ROI -->
+      <circle cx="200" cy="150" r="30" fill="rgba(255,215,0,0.3)" stroke="#ffd700" stroke-width="2"/>
+      <text x="200" y="155" text-anchor="middle" font-size="12" fill="#b45309">Target</text>
+      
+      <!-- Electrodes -->
+      <circle cx="120" cy="100" r="8" fill="#ff4444"/>
+      <text x="115" y="90" font-size="10">+</text>
+      
+      <circle cx="280" cy="100" r="8" fill="#ff8888"/>
+      <text x="278" y="90" font-size="10">-</text>
+      
+      <circle cx="120" cy="200" r="8" fill="#4444ff"/>
+      <text x="115" y="220" font-size="10">+</text>
+      
+      <circle cx="280" cy="200" r="8" fill="#8888ff"/>
+      <text x="278" y="220" font-size="10">-</text>
+      
+      <!-- Connection lines -->
+      <line x1="120" y1="100" x2="280" y2="100" stroke="#ff4444" stroke-width="2" stroke-dasharray="5,5"/>
+      <line x1="120" y1="200" x2="280" y2="200" stroke="#4444ff" stroke-width="2" stroke-dasharray="5,5"/>
+      
+      <text x="200" y="280" text-anchor="middle" font-size="12">TIS Electrode Configuration</text>
+    </svg>
+  </div>
+
+  <div class="step">
+    <h2>Algorithm Parameters</h2>
+    <ul>
+      <li><strong>F (Differential Weight):</strong> 0.8 - Controls mutation step size</li>
+      <li><strong>CR (Crossover Rate):</strong> 0.9 - Probability of using mutant parameter</li>
+      <li><strong>Population Size:</strong> 20-50 individuals typical</li>
+      <li><strong>Generations:</strong> Run until convergence or max iterations</li>
+    </ul>
+  </div>
+
+</body>
+</html> 
